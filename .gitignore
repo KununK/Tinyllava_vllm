@@ -1,0 +1,17 @@
+.venv/
+.uv-cache/
+.xinference/
+.xinference_multi/
+.hf-home/
+vllm_models/
+run/logs/
+run/xinference.pid
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.DS_Store
+
