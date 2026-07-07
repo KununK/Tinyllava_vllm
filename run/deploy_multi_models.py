@@ -25,6 +25,23 @@ def repo_path(value: str | Path) -> Path:
     return path if path.is_absolute() else ROOT / path
 
 
+def is_local_model_path(value: str) -> bool:
+    return value.startswith(("/", "./", "../")) or Path(value).exists()
+
+
+def model_kind(model: dict[str, Any]) -> str:
+    return str(model.get("kind", "tinyllava"))
+
+
+def model_path_arg(model: dict[str, Any]) -> str | None:
+    path = str(model.get("model_path", ""))
+    if not path:
+        return None
+    if model_kind(model) == "text" and not is_local_model_path(path):
+        return None
+    return str(repo_path(path))
+
+
 def load_config(path: Path) -> dict[str, Any]:
     with path.open() as f:
         config = json.load(f)
@@ -49,6 +66,8 @@ def local_env(config: dict[str, Any]) -> dict[str, str]:
     env["XINFERENCE_HOST"] = str(server.get("host", "0.0.0.0"))
     env["XINFERENCE_PORT"] = str(server.get("port", 10003))
     env["XINFERENCE_HOME"] = str(repo_path(server.get("xinference_home", ".xinference_multi")))
+    env.setdefault("XINFERENCE_MODEL_SRC", "huggingface")
+    env.setdefault("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
     env.setdefault("TRANSFORMERS_VERBOSITY", "error")
     return env
 
@@ -121,6 +140,9 @@ def register_models(config: dict[str, Any], env: dict[str, str]) -> None:
     base_url = endpoint(config)
     xinference = str(ROOT / ".venv/bin/xinference")
     for model in enabled_models(config):
+        if not model.get("register_file"):
+            print(f"Skip custom register for builtin model: {model['model_name']}")
+            continue
         model_name = model["model_name"]
         register_file = repo_path(model["register_file"])
         run_cmd(
@@ -163,10 +185,26 @@ def loaded_model_uids(base_url: str) -> set[str]:
     return {item.get("id") for item in data.get("data", []) if item.get("id")}
 
 
+def wait_model_loaded(base_url: str, model_uid: str, timeout_seconds: int) -> None:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if model_uid in loaded_model_uids(base_url):
+            return
+        time.sleep(2)
+    raise TimeoutError(
+        f"Model {model_uid} was not loaded at {base_url} in {timeout_seconds}s. "
+        f"Check {LOG_DIR / 'xinference.log'} for the backend error."
+    )
+
+
 def terminate_models(config: dict[str, Any], env: dict[str, str]) -> None:
     base_url = endpoint(config)
     xinference = str(ROOT / ".venv/bin/xinference")
+    loaded = loaded_model_uids(base_url)
     for model in enabled_models(config):
+        if model["model_uid"] not in loaded:
+            print(f"Model not loaded, skip terminate: {model['model_uid']}")
+            continue
         run_cmd(
             [
                 xinference,
@@ -194,6 +232,7 @@ def launch_models(config: dict[str, Any], env: dict[str, str], restart_models: b
             print(f"Model already loaded: {model['model_uid']}")
             continue
 
+        path_arg = model_path_arg(model)
         cmd = [
             xinference,
             "launch",
@@ -217,8 +256,6 @@ def launch_models(config: dict[str, Any], env: dict[str, str], restart_models: b
             "1",
             "--gpu-idx",
             str(model["gpu_idx"]),
-            "--model-path",
-            str(repo_path(model["model_path"])),
             "--trust-remote-code",
             str(model.get("trust_remote_code", False)).lower(),
             "--disable-virtual-env",
@@ -226,14 +263,34 @@ def launch_models(config: dict[str, Any], env: dict[str, str], restart_models: b
             str(model.get("context_length", 1024)),
             "--gpu_memory_utilization",
             str(model.get("gpu_memory_utilization", 0.3)),
-            "--limit_mm_per_prompt",
-            json.dumps(model.get("limit_mm_per_prompt", {"image": 1})),
-            "--enforce_eager",
-            str(model.get("enforce_eager", True)).lower(),
         ]
+        if path_arg:
+            cmd.extend(["--model-path", path_arg])
+        elif model.get("model_path"):
+            print(f"Use Xinference builtin source for {model['alias']}: {model['model_path']}")
+        if "limit_mm_per_prompt" in model:
+            cmd.extend(
+                [
+                    "--limit_mm_per_prompt",
+                    json.dumps(model["limit_mm_per_prompt"]),
+                ]
+            )
+        if "enforce_eager" in model:
+            cmd.extend(
+                [
+                    "--enforce_eager",
+                    str(model["enforce_eager"]).lower(),
+                ]
+            )
         for key, value in model.get("vllm_args", {}).items():
             cmd.extend([f"--{key}", str(value).lower() if isinstance(value, bool) else str(value)])
         run_cmd(cmd, env=env)
+        wait_model_loaded(
+            base_url,
+            model["model_uid"],
+            int(model.get("load_timeout_seconds", config["server"].get("model_load_timeout_seconds", 300))),
+        )
+        loaded.add(model["model_uid"])
 
 
 def print_api_summary(config: dict[str, Any]) -> None:

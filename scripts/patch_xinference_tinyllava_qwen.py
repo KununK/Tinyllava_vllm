@@ -152,11 +152,71 @@ MODEL_ACTOR_METHOD = '''    async def tinyllava_chat(self, messages: List[Dict],
         logger.info("ModelActor.tinyllava_chat returned uid=%s", self.model_uid())
         return data
 
+    async def vllm_generate(self, prompt: str, *args, **kwargs):
+        logger.info(
+            "ModelActor.vllm_generate entered uid=%s model_class=%s",
+            self.model_uid(),
+            type(self._model).__name__,
+        )
+        kwargs.pop("raw_params", None)
+        if "request_id" not in kwargs:
+            kwargs["request_id"] = str(uuid.uuid1())
+        else:
+            kwargs["request_id"] = str(kwargs["request_id"])
+        data = await self._call_wrapper_json(
+            self._model.async_generate, prompt, *args, **kwargs
+        )
+        logger.info("ModelActor.vllm_generate returned uid=%s", self.model_uid())
+        return data
+
+    async def vllm_chat(self, messages: List[Dict], *args, **kwargs):
+        logger.info(
+            "ModelActor.vllm_chat entered uid=%s model_class=%s",
+            self.model_uid(),
+            type(self._model).__name__,
+        )
+        kwargs.pop("raw_params", None)
+        if "request_id" not in kwargs:
+            kwargs["request_id"] = str(uuid.uuid1())
+        else:
+            kwargs["request_id"] = str(kwargs["request_id"])
+        data = await self._call_wrapper_json(
+            self._model.async_chat, messages, *args, **kwargs
+        )
+        logger.info("ModelActor.vllm_chat returned uid=%s", self.model_uid())
+        return data
+
+'''
+
+
+FORCE_TOKENS_PROMPT_BLOCK = '''        prompt_or_token_ids: Union[str, Dict[str, Any], List[int]] = prompt
+        if isinstance(prompt, (str, dict)):
+            tokenizer = await self._get_tokenizer(lora_request)
+            prompt_or_token_ids = await self._gen_tokens_prompt(
+                tokenizer,
+                prompt,
+                sanitized_generate_config,  # type: ignore
+            )
+
+        if sampling_params.max_tokens is None:
+            if isinstance(prompt_or_token_ids, dict):
+                prompt_length = len(prompt_or_token_ids["prompt_token_ids"])
+            else:
+                prompt_length = len(prompt_or_token_ids)
+            sampling_params.max_tokens = max_tokens = self._context_length - prompt_length
+            logger.debug("No max_tokens set, setting to: %s", max_tokens)
+
 '''
 
 
 REST_TINYLLAVA_CALL = '''                if model_uid.startswith("tinyllava-qwen"):
                     data = await model.tinyllava_chat(
+                        messages,
+                        kwargs,
+                        raw_params=raw_kwargs,
+                    )
+                elif await model.is_vllm_backend():
+                    data = await model.vllm_chat(
                         messages,
                         kwargs,
                         raw_params=raw_kwargs,
@@ -167,6 +227,15 @@ REST_TINYLLAVA_CALL = '''                if model_uid.startswith("tinyllava-qwen
                         kwargs,
                         raw_params=raw_kwargs,
                     )
+'''
+
+
+REST_VLLM_GENERATE_CALL = '''                if await model.is_vllm_backend():
+                    data = await model.vllm_generate(
+                        body.prompt, kwargs, raw_params=raw_kwargs
+                    )
+                else:
+                    data = await model.generate(body.prompt, kwargs, raw_params=raw_kwargs)
 '''
 
 
@@ -208,6 +277,19 @@ def patch_vllm_core(path: Path) -> bool:
     text, changed_multi = patch_class_fast_path(text, "VLLMMultiModel")
     changed = changed or changed_chat or changed_multi
 
+    if "if isinstance(prompt, (str, dict)):" not in text:
+        prompt_pattern = re.compile(
+            r"        prompt_or_token_ids: Union\[str, Dict\[str, Any\], List\[int\]\] = prompt\n"
+            r"        if sampling_params\.max_tokens is None:\n"
+            r".*?"
+            r"            logger\.debug\(\"No max_tokens set, setting to: %s\", max_tokens\)\n\n",
+            re.S,
+        )
+        text, count = prompt_pattern.subn(FORCE_TOKENS_PROMPT_BLOCK, text, count=1)
+        if count != 1:
+            raise RuntimeError(f"failed to patch prompt tokenization in {path}")
+        changed = True
+
     if changed:
         path.write_text(text)
     return changed
@@ -235,7 +317,14 @@ def patch_class_fast_path(text: str, class_name: str) -> tuple[str, bool]:
 
 def patch_model_actor(path: Path) -> bool:
     text = path.read_text()
-    if "async def tinyllava_chat" in text:
+    if all(
+        marker in text
+        for marker in [
+            "async def tinyllava_chat",
+            "async def vllm_generate",
+            "async def vllm_chat",
+        ]
+    ):
         return False
 
     needle = (
@@ -247,6 +336,10 @@ def patch_model_actor(path: Path) -> bool:
     idx = text.find(needle)
     if idx == -1:
         raise RuntimeError(f"generate method anchor not found in {path}")
+    existing_start = text.rfind("    async def tinyllava_chat", 0, idx)
+    if existing_start != -1:
+        text = text[:existing_start] + text[idx:]
+        idx = existing_start
     text = text[:idx] + MODEL_ACTOR_METHOD + text[idx:]
     path.write_text(text)
     return True
@@ -254,20 +347,49 @@ def patch_model_actor(path: Path) -> bool:
 
 def patch_rest_api(path: Path) -> bool:
     text = path.read_text()
-    if "model.tinyllava_chat" in text:
-        return False
+    changed = False
 
-    needle = '''                data = await model.chat(
+    chat_needle = '''                data = await model.chat(
                     messages,
                     kwargs,
                     raw_params=raw_kwargs,
                 )
 '''
-    if needle not in text:
-        raise RuntimeError(f"chat completion anchor not found in {path}")
-    text = text.replace(needle, REST_TINYLLAVA_CALL, 1)
-    path.write_text(text)
-    return True
+    if "model.vllm_chat" not in text:
+        if "model.tinyllava_chat" in text:
+            old_tiny_block = '''                if model_uid.startswith("tinyllava-qwen"):
+                    data = await model.tinyllava_chat(
+                        messages,
+                        kwargs,
+                        raw_params=raw_kwargs,
+                    )
+                else:
+                    data = await model.chat(
+                        messages,
+                        kwargs,
+                        raw_params=raw_kwargs,
+                    )
+'''
+            if old_tiny_block not in text:
+                raise RuntimeError(f"existing TinyLLaVA chat patch not found in {path}")
+            text = text.replace(old_tiny_block, REST_TINYLLAVA_CALL, 1)
+        else:
+            if chat_needle not in text:
+                raise RuntimeError(f"chat completion anchor not found in {path}")
+            text = text.replace(chat_needle, REST_TINYLLAVA_CALL, 1)
+        changed = True
+
+    generate_needle = '''                data = await model.generate(body.prompt, kwargs, raw_params=raw_kwargs)
+'''
+    if "model.vllm_generate" not in text:
+        if generate_needle not in text:
+            raise RuntimeError(f"completion anchor not found in {path}")
+        text = text.replace(generate_needle, REST_VLLM_GENERATE_CALL, 1)
+        changed = True
+
+    if changed:
+        path.write_text(text)
+    return changed
 
 
 def main() -> None:

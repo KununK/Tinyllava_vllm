@@ -22,6 +22,17 @@ def repo_path(value: str | Path) -> Path:
     return path if path.is_absolute() else ROOT / path
 
 
+def model_kind(model: dict[str, Any]) -> str:
+    return str(model.get("kind", "tinyllava"))
+
+
+def display_model_path(model: dict[str, Any]) -> str:
+    path = str(model["model_path"])
+    if model_kind(model) == "text" and not path.startswith(("/", "./", "../")):
+        return path
+    return str(repo_path(path))
+
+
 def load_config(path: Path) -> dict[str, Any]:
     with path.open() as f:
         return json.load(f)
@@ -60,10 +71,15 @@ def image_to_data_uri(value: str) -> str:
 
 
 def build_payload(model: dict[str, Any], prompt: str, image_uri: str | None, overrides: dict[str, Any]) -> dict[str, Any]:
-    content: list[dict[str, Any]] = []
-    if image_uri:
-        content.append({"type": "image_url", "image_url": {"url": image_uri}})
-    content.append({"type": "text", "text": prompt})
+    if model_kind(model) == "text":
+        if image_uri:
+            raise ValueError(f"Model {model['alias']} is text-only; clear image with /image clear.")
+        content: str | list[dict[str, Any]] = prompt
+    else:
+        content = []
+        if image_uri:
+            content.append({"type": "image_url", "image_url": {"url": image_uri}})
+        content.append({"type": "text", "text": prompt})
 
     generation = dict(model.get("generation", {}))
     generation.update(overrides)
@@ -128,7 +144,7 @@ def interactive(config: dict[str, Any], current: dict[str, Any], base_url: str) 
             continue
         if line == "/models":
             for model in enabled_models(config):
-                print(f"  {model['alias']}: uid={model['model_uid']} gpu={model['gpu_idx']} path={repo_path(model['model_path'])}")
+                print(f"  {model['alias']}: kind={model_kind(model)} uid={model['model_uid']} gpu={model['gpu_idx']} path={display_model_path(model)}")
             continue
         if line.startswith("/model "):
             name = line.split(maxsplit=1)[1]
