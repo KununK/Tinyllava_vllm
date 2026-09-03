@@ -14,11 +14,11 @@
       "model_uid": "tinyllava-qwen2-0.5b-vllm",
       "model_path": "vllm_models/tinyllava-qwen2-0.5b-llava-vllm",
       "register_file": "xinference_models/tinyllava-qwen2-0.5b-vllm.json",
-      "gpu_idx": 4,
+      "gpu_idx": 0,
       "size_in_billions": "0_5",
       "model_format": "pytorch",
       "quantization": "none",
-      "context_length": 1024,
+      "context_length": 3072,
       "gpu_memory_utilization": 0.25,
       "limit_mm_per_prompt": {
         "image": 1
@@ -28,7 +28,7 @@
       "generation": {
         "temperature": 0.0,
         "top_p": 1.0,
-        "max_tokens": 128
+        "max_tokens": 1024
       }
     },
     {
@@ -38,12 +38,12 @@
       "model_uid": "tinyllava-qwen2.5-3b-vllm",
       "model_path": "vllm_models/tinyllava-qwen2.5-3b-llava-vllm",
       "register_file": "xinference_models/tinyllava-qwen2.5-3b-vllm.json",
-      "gpu_idx": 4,
+      "gpu_idx": 0,
       "size_in_billions": "3",
       "model_format": "pytorch",
       "quantization": "none",
-      "context_length": 1024,
-      "gpu_memory_utilization": 0.30,
+      "context_length": 3072,
+      "gpu_memory_utilization": 0.65,
       "limit_mm_per_prompt": {
         "image": 1
       },
@@ -52,28 +52,52 @@
       "generation": {
         "temperature": 0.0,
         "top_p": 1.0,
-        "max_tokens": 128
+        "max_tokens": 1024
       }
     },
     {
-      "enabled": true,
-      "kind": "text",
+      "enabled": false,
+      "source": "builtin",
       "alias": "qwen3-8b",
       "model_name": "qwen3",
       "model_uid": "qwen3-8b-vllm",
       "model_path": "Qwen/Qwen3-8B",
-      "gpu_idx": 5,
+      "gpu_idx": 0,
       "size_in_billions": "8",
       "model_format": "pytorch",
       "quantization": "none",
       "context_length": 4096,
-      "gpu_memory_utilization": 0.45,
+      "gpu_memory_utilization": 0.90,
       "enforce_eager": true,
       "trust_remote_code": false,
       "generation": {
         "temperature": 0.7,
         "top_p": 0.8,
-        "max_tokens": 512
+        "max_tokens": 1024
+      }
+    },
+    {
+      "enabled": false,
+      "source": "builtin",
+      "alias": "qwen3-vl-8b",
+      "model_name": "Qwen3-VL-Instruct",
+      "model_uid": "qwen3-vl-8b-vllm",
+      "model_path": "Qwen/Qwen3-VL-8B-Instruct",
+      "gpu_idx": 0,
+      "size_in_billions": "8",
+      "model_format": "pytorch",
+      "quantization": "none",
+      "context_length": 4096,
+      "gpu_memory_utilization": 0.90,
+      "limit_mm_per_prompt": {
+        "image": 1
+      },
+      "enforce_eager": true,
+      "trust_remote_code": false,
+      "generation": {
+        "temperature": 0.2,
+        "top_p": 0.9,
+        "max_tokens": 1024
       }
     }
   ]

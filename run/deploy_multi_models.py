@@ -29,15 +29,15 @@ def is_local_model_path(value: str) -> bool:
     return value.startswith(("/", "./", "../")) or Path(value).exists()
 
 
-def model_kind(model: dict[str, Any]) -> str:
-    return str(model.get("kind", "tinyllava"))
+def model_source(model: dict[str, Any]) -> str:
+    return str(model.get("source", "local"))
 
 
 def model_path_arg(model: dict[str, Any]) -> str | None:
     path = str(model.get("model_path", ""))
     if not path:
         return None
-    if model_kind(model) == "text" and not is_local_model_path(path):
+    if model_source(model) == "builtin" and not is_local_model_path(path):
         return None
     return str(repo_path(path))
 

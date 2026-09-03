@@ -3,7 +3,8 @@
 Configuration:
 
 - `models.json`: model paths, GPU placement, vLLM launch options, and default generation params.
-- TinyLLaVA `model_path` values are local converted checkpoint directories. Text-only builtin HF models can keep repo ids such as `Qwen/Qwen3-8B`; the launcher will not pass those repo ids as local `--model-path` values.
+- Local TinyLLaVA `model_path` values are converted checkpoint directories. Xinference builtin models should set `source` to `builtin`; repo ids such as `Qwen/Qwen3-8B` or `Qwen/Qwen3-VL-8B-Instruct` are then resolved by Xinference instead of being passed as local `--model-path` values.
+- Models with `limit_mm_per_prompt.image` accept image input in `chat_switch.py`; models without it use plain text chat requests.
 
 Deploy all enabled models:
 

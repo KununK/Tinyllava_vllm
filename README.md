@@ -1,6 +1,6 @@
 # TinyLLaVA vLLM on Xinference
 
-This repository contains scripts for serving local TinyLLaVA Qwen checkpoints and native Hugging Face text models with Xinference and the vLLM engine.
+This repository contains scripts for serving local TinyLLaVA Qwen checkpoints and native Hugging Face / Xinference builtin models with Xinference and the vLLM engine.
 
 Raw TinyLLaVA checkpoints use custom Hugging Face remote code with `model_type: tinyllava`. vLLM does not load that layout directly in this environment, so the workflow converts the Qwen TinyLLaVA checkpoints into a vLLM-compatible `LlavaForConditionalGeneration` layout and registers matching Xinference model specs.
 
@@ -10,7 +10,8 @@ Configured in `run/models.json`:
 
 - `tinyllava-qwen2-0.5b-vllm`: TinyLLaVA Qwen2 0.5B vision-language model
 - `tinyllava-qwen2.5-3b-vllm`: TinyLLaVA Qwen2.5 3B vision-language model
-- `qwen3-8b-vllm`: native text-only `Qwen/Qwen3-8B`
+- `qwen3-8b-vllm`: native `Qwen/Qwen3-8B`
+- `qwen3-vl-8b-vllm`: native `Qwen/Qwen3-VL-8B-Instruct` vision-language model
 
 Expected source checkpoints, relative to this repository:
 
@@ -22,7 +23,7 @@ Generated vLLM checkpoints:
 - `vllm_models/tinyllava-qwen2-0.5b-llava-vllm`
 - `vllm_models/tinyllava-qwen2.5-3b-llava-vllm`
 
-Model weights and converted checkpoints are not tracked by Git. Native Hugging Face models such as `Qwen/Qwen3-8B` are resolved by Xinference/vLLM from the Hugging Face cache or downloaded by the runtime if network access is available.
+Model weights and converted checkpoints are not tracked by Git. Native Hugging Face models such as `Qwen/Qwen3-8B` and `Qwen/Qwen3-VL-8B-Instruct` are resolved by Xinference/vLLM from the Hugging Face cache or downloaded by the runtime if network access is available.
 
 ## Requirements
 
@@ -88,14 +89,15 @@ export XINFERENCE_ENDPOINT=http://127.0.0.1:10003
 
 Edit `run/models.json` to set:
 
-- `kind`: `tinyllava` for converted TinyLLaVA VLMs, `text` for native text-only HF models
+- `source`: `local` for converted/local checkpoint directories, `builtin` for models resolved by Xinference from its builtin model registry
 - model paths
 - GPU placement
 - `context_length`
 - `gpu_memory_utilization`
 - default generation parameters such as `temperature`, `top_p`, and `max_tokens`
+- `limit_mm_per_prompt` for models that should accept image input
 
-For converted TinyLLaVA models, `model_path` must point to a local vLLM checkpoint directory. For native text models that Xinference already knows, such as `Qwen/Qwen3-8B`, a non-local Hugging Face repo id in `model_path` is treated as metadata and the launcher omits `--model-path`, letting Xinference resolve the builtin model source.
+For converted TinyLLaVA models, `source` defaults to `local` and `model_path` must point to a local vLLM checkpoint directory. For native models that Xinference already knows, such as `Qwen/Qwen3-8B` or `Qwen/Qwen3-VL-8B-Instruct`, set `source` to `builtin`; if `model_path` is a Hugging Face repo id, the launcher omits `--model-path` and lets Xinference resolve the builtin model source.
 
 Deploy all enabled models:
 
@@ -144,7 +146,7 @@ Useful commands inside the shell:
 /exit
 ```
 
-For text-only models, clear any image context before switching:
+For models without `limit_mm_per_prompt.image`, clear any image context before switching:
 
 ```text
 /image clear

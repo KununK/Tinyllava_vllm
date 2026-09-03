@@ -22,15 +22,16 @@ def repo_path(value: str | Path) -> Path:
     return path if path.is_absolute() else ROOT / path
 
 
-def model_kind(model: dict[str, Any]) -> str:
-    return str(model.get("kind", "tinyllava"))
-
-
 def display_model_path(model: dict[str, Any]) -> str:
     path = str(model["model_path"])
-    if model_kind(model) == "text" and not path.startswith(("/", "./", "../")):
+    if model.get("source") == "builtin" and not path.startswith(("/", "./", "../")):
         return path
     return str(repo_path(path))
+
+
+def model_accepts_image(model: dict[str, Any]) -> bool:
+    limit_mm = model.get("limit_mm_per_prompt", {})
+    return isinstance(limit_mm, dict) and int(limit_mm.get("image", 0) or 0) > 0
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -71,15 +72,16 @@ def image_to_data_uri(value: str) -> str:
 
 
 def build_payload(model: dict[str, Any], prompt: str, image_uri: str | None, overrides: dict[str, Any]) -> dict[str, Any]:
-    if model_kind(model) == "text":
-        if image_uri:
-            raise ValueError(f"Model {model['alias']} is text-only; clear image with /image clear.")
+    if image_uri and not model_accepts_image(model):
+        raise ValueError(f"Model {model['alias']} has no image input enabled; clear image with /image clear.")
+
+    if not image_uri:
         content: str | list[dict[str, Any]] = prompt
     else:
-        content = []
-        if image_uri:
-            content.append({"type": "image_url", "image_url": {"url": image_uri}})
-        content.append({"type": "text", "text": prompt})
+        content = [
+            {"type": "image_url", "image_url": {"url": image_uri}},
+            {"type": "text", "text": prompt},
+        ]
 
     generation = dict(model.get("generation", {}))
     generation.update(overrides)
@@ -144,7 +146,9 @@ def interactive(config: dict[str, Any], current: dict[str, Any], base_url: str) 
             continue
         if line == "/models":
             for model in enabled_models(config):
-                print(f"  {model['alias']}: kind={model_kind(model)} uid={model['model_uid']} gpu={model['gpu_idx']} path={display_model_path(model)}")
+                source = model.get("source", "local")
+                vision = "vision" if model_accepts_image(model) else "text"
+                print(f"  {model['alias']}: source={source} mode={vision} uid={model['model_uid']} gpu={model['gpu_idx']} path={display_model_path(model)}")
             continue
         if line.startswith("/model "):
             name = line.split(maxsplit=1)[1]
