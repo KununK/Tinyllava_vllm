@@ -268,10 +268,11 @@ def patch_vllm_core(path: Path) -> bool:
         r"(?=\n    @vllm_check\n    async def async_generate\()",
         re.S,
     )
-    text, count = gen_pattern.subn(gen_tokens_method, text, count=1)
+    patched_text, count = gen_pattern.subn(gen_tokens_method, text, count=1)
     if count != 1:
         raise RuntimeError(f"failed to patch _gen_tokens_prompt in {path}")
-    changed = True
+    changed = changed or patched_text != text
+    text = patched_text
 
     text, changed_chat = patch_class_fast_path(text, "VLLMChatModel")
     text, changed_multi = patch_class_fast_path(text, "VLLMMultiModel")
